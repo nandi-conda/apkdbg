@@ -1,0 +1,8 @@
+__pycache__/
+node_modules/
+.pixi/
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/native-libs/

@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+  <title>Phone doctor</title>
+  <link rel="stylesheet" href="ui.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main id="app"></main>
+  <script type="module">
+    import { mount } from "./ultra.js";
+
+    // On a phone, MainActivity.java adds window.Android and answers state.json
+    // from the running agent. In a desktop browser this stand-in keeps a fake
+    // transcript in memory so the page can be tried without the agent.
+    const REFRESH = 1; // keep in sync with app.py
+    let app = null;
+    const changed = () => app && app.dispatch(REFRESH, 0);
+
+    const demo = (() => {
+      const st = { rev: 0, status: 0, detail: "", hasKey: 0, keyHint: "", items: [] };
+      const bump = () => { st.rev++; changed(); };
+      let timer = null;
+      return {
+        state: () => JSON.stringify(st),
+        sendPrompt: (s) => {
+          st.items.push({ r: 0, t: s });
+          st.status = 3; st.detail = "Thinking…"; bump();
+          let step = 0;
+          timer = setInterval(() => {
+            step++;
+            if (step === 1) { st.items.push({ r: 2, t: "bash: cat /sys/class/power_supply/battery/capacity\n→ 81" }); st.detail = "Running a command…"; }
+            else if (step === 2) st.items.push({ r: 1, t: "This is the browser demo, so no agent ran." });
+            else if (step < 6) st.items[st.items.length - 1].t += " On a phone the reply streams in here.";
+            else { clearInterval(timer); st.status = 1; st.detail = ""; }
+            bump();
+          }, 350);
+        },
+        saveKey: (k) => { st.hasKey = 1; st.keyHint = k.slice(0, 3) + "…" + k.slice(-4); st.status = 1; bump(); },
+        clearKey: () => { st.hasKey = 0; st.keyHint = ""; st.status = 0; bump(); },
+        stop: () => { clearInterval(timer); st.status = 1; st.detail = ""; st.items.push({ r: 4, t: "Stopped." }); bump(); },
+        newChat: () => { clearInterval(timer); st.items = []; st.status = st.hasKey ? 1 : 0; bump(); },
+        openUrl: (u) => window.open(u, "_blank"),
+      };
+    })();
+    const host = window.Android || demo;
+
+    // state.json is answered by the shell on a phone; the demo answers it here.
+    if (!window.Android) {
+      const realFetch = window.fetch.bind(window);
+      window.fetch = (url, opts) => String(url).endsWith("state.json")
+        ? Promise.resolve(new Response(demo.state(), { headers: { "content-type": "application/json" } }))
+        : realFetch(url, opts);
+      document.documentElement.classList.add("demo");
+    }
+
+    // Keep the newest message in view while the agent writes.
+    let lastCount = 0, lastLen = 0;
+    const follow = () => {
+      const rows = document.querySelectorAll(".transcript > li");
+      const last = rows[rows.length - 1];
+      const len = last ? last.textContent.length : 0;
+      if (rows.length !== lastCount || len !== lastLen) {
+        const nearBottom = innerHeight + scrollY >= document.body.scrollHeight - 160;
+        if (rows.length !== lastCount || nearBottom) window.scrollTo(0, document.body.scrollHeight);
+        lastCount = rows.length; lastLen = len;
+      }
+    };
+
+    app = await mount("#app", "./app.wasm", {
+      onRender: follow,
+      imports: ({ strs }) => ({
+        send_prompt: (h) => host.sendPrompt(strs[h]),
+        save_key: (h) => host.saveKey(strs[h].trim()),
+        clear_key: () => host.clearKey(),
+        stop_agent: () => host.stop(),
+        new_chat: () => host.newChat(),
+        open_url: (h) => host.openUrl(strs[h]),
+      }),
+    });
+    window.apkdbg = { changed };
+  </script>
+</body>
+</html>

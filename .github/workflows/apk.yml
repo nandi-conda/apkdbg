@@ -1,0 +1,89 @@
+name: apk
+
+# Builds the Phone doctor APK: the ultra UI in web/, the Java shell in android/,
+# and the native payload (prime-agent + CPython) from the native-latest release.
+# Publishes it as the apk-latest release so a phone can download it directly.
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "native/**"
+      - ".github/workflows/native.yml"
+  workflow_run:
+    workflows: [native]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apk
+  cancel-in-progress: true
+
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: prefix-dev/setup-pixi@v0.9.3
+        with:
+          cache: false
+          locked: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Fetch Playwright
+        run: |
+          npm install --no-save --no-package-lock playwright@1.56.1
+          ./node_modules/.bin/playwright install --with-deps chromium
+      - name: Build the wasm and run the browser test
+        run: NODE_PATH=$PWD/node_modules pixi run test
+      - name: Check the committed web/ build is up to date
+        run: git diff --exit-code --stat web/
+
+  apk:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v5
+      - name: Fetch the native payload
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p native-dl android/native-libs
+          if ! gh release download native-latest --repo "$GITHUB_REPOSITORY" --pattern 'native-*.tar.gz' --dir native-dl; then
+            echo "::warning::No native-latest release yet; building an APK without the agent runtime."
+            exit 0
+          fi
+          for t in native-dl/native-*.tar.gz; do tar -xzf "$t" -C android/native-libs; done
+          for abi in android/native-libs/*/; do
+            # PYTHONHOME rides along as a "library" so each ABI gets its own and it lands in nativeLibraryDir.
+            mv "$abi/pythonhome.tar.gz" "$abi/libpythonhome.so"
+          done
+          ls -laR android/native-libs
+      - name: Build the APK
+        working-directory: android
+        run: ./gradlew --no-daemon assembleDebug -PversionCode=$((100 + ${{ github.run_number }}))
+      - uses: actions/upload-artifact@v5
+        with:
+          name: phone-doctor-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+      - name: Publish the apk-latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp android/app/build/outputs/apk/debug/app-debug.apk phone-doctor.apk
+          gh release delete apk-latest --yes --cleanup-tag || true
+          gh release create apk-latest phone-doctor.apk --prerelease --target "$GITHUB_SHA" \
+            --title "Phone doctor (latest build)" \
+            --notes "Debug-signed APK built from $GITHUB_SHA. Install it, open Phone doctor, and paste your DeepSeek API key in Settings."

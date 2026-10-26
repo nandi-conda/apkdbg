@@ -1,0 +1,16 @@
+[workspace]
+name = "apkdbg"
+description = "Phone doctor: prime-agent on DeepSeek V4 Flash with an ultra (LPython -> wasm) UI, as an Android APK"
+channels = ["https://conda.anaconda.org/conda-forge", "https://prefix.dev/nandi-testing"]
+platforms = ["linux-64", "osx-64", "osx-arm64", "win-64"]
+
+# ultra (the framework and its `ultra` build CLI, with lpython) comes from prefix.dev/nandi-testing.
+[dependencies]
+python = "3.12.*"
+ultra = ">=0.1.20"
+nodejs = ">=22"
+
+[tasks]
+build = { cmd = "ultra build web/app.py", description = "Compile web/app.py to web/app.wasm" }
+serve = { cmd = "ultra serve web", description = "Serve the browser demo on http://localhost:8000" }
+test = { cmd = "python tests/run.py", depends-on = ["build"], description = "Build, then run the browser test against a local server" }

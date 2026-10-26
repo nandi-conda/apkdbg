@@ -1,0 +1,59 @@
+plugins {
+    id "com.android.application"
+}
+
+android {
+    namespace "dev.apkdbg"
+    compileSdk 35
+
+    defaultConfig {
+        applicationId "dev.apkdbg"
+        minSdk 26
+        targetSdk 35
+        // CI passes -PversionCode=<workflow run number>.
+        versionCode((project.findProperty("versionCode") ?: "1") as Integer)
+        versionName("0.1." + versionCode)
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    sourceSets {
+        // The UI is the ultra app in web/, served from assets.
+        main.assets.srcDirs = ["$rootDir/../web"]
+        // The native payload (prime-agent, CPython, PYTHONHOME) from the native-latest
+        // release; .github/workflows/apk.yml unpacks it here before building.
+        main.jniLibs.srcDirs = ["$rootDir/native-libs"]
+    }
+
+    androidResources {
+        ignoreAssetsPattern = "!app.py:!__pycache__:!.*"
+    }
+
+    packaging {
+        jniLibs {
+            // The payload's .so files are programs and archives the app runs and unpacks
+            // from nativeLibraryDir, so they must be real files there.
+            useLegacyPackaging true
+            keepDebugSymbols += ["**/*.so"]
+        }
+    }
+
+    signingConfigs {
+        // One committed debug key, so every CI build installs over the last one.
+        debug {
+            storeFile file("debug.keystore")
+            storePassword "android"
+            keyAlias "androiddebugkey"
+            keyPassword "android"
+        }
+    }
+
+    buildTypes {
+        debug {
+            signingConfig signingConfigs.debug
+        }
+    }
+}
