@@ -166,7 +166,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           ls -la
-          gh release delete native-latest --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag || true
-          gh release create native-latest native-*.tar.gz --repo "$GITHUB_REPOSITORY" \
-            --target "$GITHUB_SHA" --title "native-latest" --prerelease \
+          # The native-latest tag is pushed by hand: GITHUB_TOKEN may not create
+          # refs on commits that touch workflow files. Reuse it and swap assets.
+          if ! gh release view native-latest --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create native-latest --repo "$GITHUB_REPOSITORY" --verify-tag \
+              --title "native-latest" --prerelease --notes "Android native payload for the APK."
+          fi
+          gh release upload native-latest native-*.tar.gz --repo "$GITHUB_REPOSITORY" --clobber
+          gh release edit native-latest --repo "$GITHUB_REPOSITORY" \
             --notes "prime-agent ${PRIME_AGENT_REF} + CPython ${PY_VERSION} for Android (API ${ANDROID_API}+). Built from ${GITHUB_SHA}."
