@@ -18,9 +18,10 @@ import android.util.Log;
  * process (and its prime-agent child) isn't killed when the user switches apps
  * or the screen goes off mid-turn.
  */
-public class AgentService extends Service {
+public class AgentService extends Service implements Agent.Listener {
     private static final String CHANNEL = "agent";
     private PowerManager.WakeLock wake;
+    private boolean foreground = false;
 
     static void start(Context c) {
         try {
@@ -28,10 +29,6 @@ public class AgentService extends Service {
         } catch (RuntimeException e) { // background-start limits; the turn still runs
             Log.w(Agent.TAG, "foreground service", e);
         }
-    }
-
-    static void stop(Context c) {
-        c.stopService(new Intent(c, AgentService.class));
     }
 
     @Override
@@ -52,15 +49,26 @@ public class AgentService extends Service {
         } else {
             startForeground(1, n);
         }
+        foreground = true;
+        Agent.get(this).addListener(this);
         if (wake == null) {
             wake = getSystemService(PowerManager.class).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "apkdbg:agent");
             wake.acquire(30 * 60 * 1000L);
         }
+        changed();
         return START_NOT_STICKY;
+    }
+
+    /** Stop once the agent is idle. Calling stopService() from outside could beat
+     * startForeground() and crash the app, so the service stops itself. */
+    @Override
+    public void changed() {
+        if (foreground && !Agent.get(this).isRunning()) stopSelf();
     }
 
     @Override
     public void onDestroy() {
+        Agent.get(this).removeListener(this);
         if (wake != null && wake.isHeld()) wake.release();
         wake = null;
         super.onDestroy();

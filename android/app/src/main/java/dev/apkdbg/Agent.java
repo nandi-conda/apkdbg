@@ -77,6 +77,8 @@ final class Agent {
         }
     }
 
+    synchronized boolean isRunning() { return status == RUNNING; }
+
     void addListener(Listener l) { listeners.add(l); }
     void removeListener(Listener l) { listeners.remove(l); }
 
@@ -142,13 +144,14 @@ final class Agent {
         add(USER, text.trim());
         status = RUNNING;
         detail = "Starting the agent…";
-        AgentService.start(ctx);
         if (proc == null || !proc.isAlive()) {
-            pendingPrompt = text.trim();
             startProcess();
+            pendingPrompt = text.trim();
         } else {
             send(text.trim());
         }
+        // The service stops itself once the turn ends (it watches isRunning()).
+        AgentService.start(ctx);
         changed();
     }
 
@@ -160,7 +163,6 @@ final class Agent {
         detail = "";
         streaming = null;
         add(INFO, "Stopped.");
-        AgentService.stop(ctx);
         changed();
     }
 
@@ -264,7 +266,6 @@ final class Agent {
         proc = null;
         stdin = null;
         streaming = null;
-        AgentService.stop(ctx);
     }
 
     private void send(String message) {
@@ -348,7 +349,6 @@ final class Agent {
         status = FAILED;
         detail = why;
         streaming = null;
-        AgentService.stop(ctx);
         changed();
     }
 
@@ -363,7 +363,6 @@ final class Agent {
                     if ("prompt".equals(ev.optString("command"))) {
                         status = IDLE;
                         detail = "";
-                        AgentService.stop(ctx);
                     }
                     return true;
                 }
@@ -425,7 +424,6 @@ final class Agent {
                 status = IDLE;
                 detail = "";
                 streaming = null;
-                AgentService.stop(ctx);
                 return true;
             default:
                 return false;

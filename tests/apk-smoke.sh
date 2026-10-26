@@ -52,6 +52,7 @@ adb shell "run-as $PKG ls files files/pyhome files/work" > "$OUT/files.txt" 2>&1
 adb shell "run-as $PKG cat files/work/device_snapshot.json" > "$OUT/device_snapshot.json" 2>&1
 echo "--- apkdbg log (tail)"; tail -n 80 "$OUT/logcat.txt"
 echo "--- files"; cat "$OUT/files.txt"
+echo "--- crashes"; grep -A 30 'FATAL EXCEPTION' "$OUT/logcat-full.txt" | head -60
 grep -q 'FATAL EXCEPTION' "$OUT/logcat-full.txt" && { echo "crash"; exit 1; }
 grep -q 'libpythonexe.so\|rlm' "$OUT/logcat-full.txt" || echo "warning: no sign of the kernel in the log"
 grep -q 'agent failed' "$OUT/logcat.txt" && { echo "agent failed"; exit 1; }
