@@ -1,0 +1,33 @@
+diff --git a/crates/pa-core/src/kernel/bootstrap/mod.rs b/crates/pa-core/src/kernel/bootstrap/mod.rs
+index 29a714b..029bb7f 100644
+--- a/crates/pa-core/src/kernel/bootstrap/mod.rs
++++ b/crates/pa-core/src/kernel/bootstrap/mod.rs
+@@ -38,6 +38,7 @@ pub struct KernelPythonSkill {
+ 
+ /// The default extra packages pre-installed in the kernel venv and promised to
+ /// the model in the system prompt.
++#[cfg(not(target_os = "android"))]
+ pub const DEFAULT_RLM_EXTRA_PACKAGES: [(&str, &str, &str); 12] = [
+     // (uvArg, importName, promptLabel)
+     ("requests", "requests", "requests"),
+@@ -54,6 +55,20 @@ pub const DEFAULT_RLM_EXTRA_PACKAGES: [(&str, &str, &str); 12] = [
+     ("tyro", "tyro", "tyro"),
+ ];
+ 
++/// Android: only the pure-python extras ship in the bundled interpreter
++/// (no native wheels for pandas/numpy/scipy/lxml/pydantic on the device).
++#[cfg(target_os = "android")]
++pub const DEFAULT_RLM_EXTRA_PACKAGES: [(&str, &str, &str); 7] = [
++    // (uvArg, importName, promptLabel)
++    ("requests", "requests", "requests"),
++    ("httpx", "httpx", "httpx"),
++    ("pyyaml", "yaml", "yaml (PyYAML)"),
++    ("tomli", "tomli", "tomli"),
++    ("python-dotenv", "dotenv", "dotenv (python-dotenv)"),
++    ("beautifulsoup4", "bs4", "bs4 (Beautiful Soup)"),
++    ("tyro", "tyro", "tyro"),
++];
++
+ #[must_use]
+ pub fn default_rlm_extra_uv_args() -> Vec<&'static str> {
+     DEFAULT_RLM_EXTRA_PACKAGES

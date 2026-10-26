@@ -1,0 +1,168 @@
+name: native
+
+# Builds the native payload the APK bundles: prime-agent (Rust, cross-compiled
+# for Android), the python.org Android CPython build plus an exec-able launcher,
+# and a PYTHONHOME tarball with prime-agent-runtime and pure-python extras.
+# Publishes native-<abi>.tar.gz on the `native-latest` release.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "native/**"
+      - ".github/workflows/native.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  PRIME_AGENT_REPO: https://github.com/PrimeIntellect-ai/prime-agent
+  PRIME_AGENT_REF: c4c238ca025e382d96fb5f37e6328ca77fb82ef3
+  PY_VERSION: "3.14.0"
+  PY_MINOR: "3.14"
+  ANDROID_API: "26"
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - abi: arm64-v8a
+            triple: aarch64-linux-android
+          - abi: x86_64
+            triple: x86_64-linux-android
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch and patch prime-agent
+        run: |
+          git init -q pa && cd pa
+          git remote add origin "$PRIME_AGENT_REPO"
+          git fetch -q --depth 1 origin "$PRIME_AGENT_REF"
+          git checkout -q FETCH_HEAD
+          git apply ../native/patches/prime-agent-android.patch
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.triple }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: pa
+          key: ${{ matrix.triple }}
+
+      - name: Build prime-agent
+        working-directory: pa
+        run: |
+          cargo install cargo-ndk --locked
+          export ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME"
+          cargo ndk -t ${{ matrix.abi }} -P $ANDROID_API build --release -p pa-cli --bin prime-agent
+
+      - name: Fetch Android CPython
+        run: |
+          curl -fsSL -o py.tar.gz "https://www.python.org/ftp/python/$PY_VERSION/python-$PY_VERSION-${{ matrix.triple }}.tar.gz"
+          mkdir py && tar -xzf py.tar.gz -C py
+          find py -maxdepth 3 | sort | head -50
+          LIBPY=$(find py -name "libpython$PY_MINOR.so" | head -1)
+          test -n "$LIBPY"
+          LIBDIR=$(dirname "$LIBPY")
+          PREFIX=$(dirname "$LIBDIR")
+          echo "LIBDIR=$LIBDIR" >> "$GITHUB_ENV"
+          echo "PREFIX=$PREFIX" >> "$GITHUB_ENV"
+          ls -la "$LIBDIR"
+
+      - name: Assemble native/${{ matrix.abi }}
+        run: |
+          set -x
+          NDK_BIN="$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          OUT="out/${{ matrix.abi }}"
+          mkdir -p "$OUT"
+
+          cp pa/target/${{ matrix.triple }}/release/prime-agent "$OUT/libprimeagent.so"
+
+          "$NDK_BIN/${{ matrix.triple }}${ANDROID_API}-clang" -O2 -fPIE -pie \
+            -I "$PREFIX/include/python$PY_MINOR" native/launcher.c \
+            -L "$LIBDIR" -lpython$PY_MINOR -Wl,-rpath,'$ORIGIN' \
+            -o "$OUT/libpythonexe.so"
+
+          cp "$LIBDIR/libpython$PY_MINOR.so" "$OUT/"
+          for f in "$LIBDIR"/lib*_python.so; do cp "$f" "$OUT/"; done
+
+          # PYTHONHOME: stdlib (with lib-dynload) + site-packages.
+          HOMEDIR=pyhome/lib/python$PY_MINOR
+          mkdir -p pyhome/lib
+          cp -r "$PREFIX/lib/python$PY_MINOR" pyhome/lib/
+          rm -rf "$HOMEDIR"/{test,idlelib,tkinter,turtledemo,ensurepip,site-packages}
+          find pyhome -name __pycache__ -prune -exec rm -rf {} +
+          SP="$HOMEDIR/site-packages"
+          mkdir -p "$SP"
+          python3 -m pip install --no-compile --target "$SP" --no-deps ./pa/prime-agent-runtime
+          python3 -m pip install --no-compile --target "$SP" --only-binary=:all: \
+            --platform any --python-version $PY_MINOR --implementation py \
+            tyro requests httpx tomli python-dotenv beautifulsoup4 dill
+          python3 -m pip install --no-compile --target "$SP" --no-deps --no-binary pyyaml pyyaml
+          # Drop anything built for the host; Android must use pure-python fallbacks.
+          find "$SP" -name '*.so' -print -delete
+          rm -rf "$SP/bin"
+          ls "$SP"
+          tar -czf "$OUT/pythonhome.tar.gz" -C pyhome .
+
+          "$NDK_BIN/llvm-strip" --strip-unneeded "$OUT"/*.so || true
+          ls -la "$OUT"
+          tar -czf native-${{ matrix.abi }}.tar.gz -C out ${{ matrix.abi }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-${{ matrix.abi }}
+          path: native-${{ matrix.abi }}.tar.gz
+
+  smoke:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: native-x86_64
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Run on emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        with:
+          api-level: 34
+          arch: x86_64
+          target: default
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
+          script: |
+            tar -xzf native-x86_64.tar.gz
+            adb push x86_64 /data/local/tmp/pa
+            adb push native/smoke.sh /data/local/tmp/pa/smoke.sh
+            adb shell "DEEPSEEK_API_KEY='$DEEPSEEK_API_KEY' sh /data/local/tmp/pa/smoke.sh /data/local/tmp/pa" | tee smoke.log; grep -q 'SMOKE OK' smoke.log
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: native-*
+          merge-multiple: true
+      - name: Publish native-latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls -la
+          gh release delete native-latest --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag || true
+          gh release create native-latest native-*.tar.gz --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" --title "native-latest" --prerelease \
+            --notes "prime-agent ${PRIME_AGENT_REF} + CPython ${PY_VERSION} for Android (API ${ANDROID_API}+). Built from ${GITHUB_SHA}."
