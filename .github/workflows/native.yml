@@ -44,6 +44,10 @@ jobs:
           git fetch -q --depth 1 origin "$PRIME_AGENT_REF"
           git checkout -q FETCH_HEAD
           git apply ../native/patches/prime-agent-android.patch
+          # Android is Linux underneath (procfs, epoll, bionic): take the Linux
+          # code paths instead of the macOS-flavoured `not(linux)` fallbacks.
+          grep -rl 'target_os = "linux"' crates vendor --include='*.rs' \
+            | xargs sed -i 's/target_os = "linux"/any(target_os = "linux", target_os = "android")/g'
 
       - uses: dtolnay/rust-toolchain@stable
         with:
