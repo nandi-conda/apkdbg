@@ -47,7 +47,7 @@ jobs:
 
   apk:
     if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
-    runs-on: depot-ubuntu-24.04-4
+    runs-on: depot-ubuntu-24.04
     timeout-minutes: 30
     outputs:
       has-x86_64: ${{ steps.native.outputs.has-x86_64 }}

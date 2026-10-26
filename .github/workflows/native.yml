@@ -33,7 +33,7 @@ jobs:
             triple: aarch64-linux-android
           - abi: x86_64
             triple: x86_64-linux-android
-    runs-on: depot-ubuntu-24.04-8
+    runs-on: depot-ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
