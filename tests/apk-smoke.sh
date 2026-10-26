@@ -62,6 +62,9 @@ while [ $i -lt 240 ]; do
   if ! adb shell pidof $PKG >/dev/null; then echo "app died"; break; fi
 done
 adb exec-out screencap -p > "$OUT/2-after.png"
+find_node "zzz-none" >/dev/null
+echo "--- texts on screen after the turn"
+grep -o 'text="[^"]*"' "$OUT/ui.xml" | grep -v '=""' | head -40
 adb logcat -d > "$OUT/logcat-full.txt"
 adb shell "run-as $PKG ls files files/pyhome files/work" > "$OUT/files.txt" 2>&1
 adb shell "run-as $PKG cat files/work/device_snapshot.json" > "$OUT/device_snapshot.json" 2>&1
