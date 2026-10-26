@@ -344,6 +344,7 @@ final class Agent {
     }
 
     private void fail(String why) {
+        Log.w(TAG, "agent failed: " + why);
         status = FAILED;
         detail = why;
         streaming = null;
@@ -354,6 +355,7 @@ final class Agent {
     /** Fold one RPC event into the transcript. Returns whether anything visible changed. */
     private boolean handle(JSONObject ev) {
         String type = ev.optString("type");
+        if (!"message_update".equals(type)) Log.d(TAG, "event " + type + (type.equals("response") ? " " + ev : ""));
         switch (type) {
             case "response": {
                 if (!ev.optBoolean("success", true)) {
