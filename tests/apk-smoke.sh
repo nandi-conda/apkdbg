@@ -19,12 +19,12 @@ adb shell am start -W -n $PKG/.MainActivity || exit 1
 sleep 8
 adb exec-out screencap -p > "$OUT/1-start.png"
 
-tap() { # tap the first node whose text contains $1
+find_node() { # print "x y" of the first node whose text or description contains $1
   adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1
   adb shell cat /sdcard/ui.xml > "$OUT/ui.xml"
-  B=$(python3 - "$1" "$OUT/ui.xml" <<'PY'
+  python3 - "$1" "$OUT/ui.xml" <<'PY'
 import re, sys
-want, xml = sys.argv[1], open(sys.argv[2], encoding="utf-8").read()
+want, xml = sys.argv[1], open(sys.argv[2], encoding="utf-8", errors="replace").read()
 for m in re.finditer(r'<node [^>]*>', xml):
     n = m.group(0)
     t = re.search(r' text="([^"]*)"', n); d = re.search(r' content-desc="([^"]*)"', n)
@@ -32,12 +32,27 @@ for m in re.finditer(r'<node [^>]*>', xml):
         x1, y1, x2, y2 = map(int, re.search(r'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', n).groups())
         print((x1 + x2) // 2, (y1 + y2) // 2); break
 PY
-)
-  [ -n "$B" ] || { echo "no node with text: $1"; return 1; }
-  adb shell input tap $B
 }
 
-tap "Full health check" || { adb logcat -d -s apkdbg:* AndroidRuntime:E chromium:* > "$OUT/logcat.txt"; exit 1; }
+tap() { # tap the first node whose text contains $1, waiting up to 30 s for it
+  n=0
+  while [ $n -lt 15 ]; do
+    B=$(find_node "$1")
+    if [ -n "$B" ]; then adb shell input tap $B; return 0; fi
+    sleep 2; n=$((n+1))
+  done
+  echo "no node with text: $1. Texts on screen:"
+  grep -o 'text="[^"]*"\|content-desc="[^"]*"' "$OUT/ui.xml" | grep -v '=""' | head -40
+  adb exec-out screencap -p > "$OUT/no-node.png"
+  return 1
+}
+
+if ! tap "Full health check"; then
+  adb logcat -d > "$OUT/logcat-full.txt"
+  echo "--- apkdbg / crash log"; grep -E ' apkdbg |AndroidRuntime|FATAL' "$OUT/logcat-full.txt" | tail -60
+  adb shell "run-as $PKG ls -la shared_prefs; run-as $PKG cat shared_prefs/apkdbg.xml"
+  exit 1
+fi
 # Wait for the turn to settle: an answer, an error row, or a failed agent.
 i=0
 while [ $i -lt 240 ]; do
