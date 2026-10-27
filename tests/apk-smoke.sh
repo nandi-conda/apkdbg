@@ -65,6 +65,41 @@ adb exec-out screencap -p > "$OUT/2-after.png"
 find_node "zzz-none" >/dev/null
 echo "--- texts on screen after the turn"
 grep -o 'text="[^"]*"' "$OUT/ui.xml" | grep -v '=""' | head -40
+# The keyboard must not cover the prompt box: tap it and compare its bounds with the IME's.
+adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1; adb shell cat /sdcard/ui.xml > "$OUT/ui.xml"
+B=$(python3 - "$OUT/ui.xml" <<'PY'
+import re, sys
+for n in re.findall(r'<node [^>]*>', open(sys.argv[1], encoding="utf-8", errors="replace").read()):
+    if 'class="android.widget.EditText"' in n:
+        x1, y1, x2, y2 = map(int, re.search(r'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', n).groups())
+        print((x1 + x2) // 2, (y1 + y2) // 2); break
+PY
+)
+if [ -z "$B" ]; then echo "keyboard check: no input box on screen"; exit 1; fi
+adb shell input tap $B
+sleep 3
+adb exec-out screencap -p > "$OUT/3-keyboard.png"
+adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1; adb shell cat /sdcard/ui.xml > "$OUT/ui-keyboard.xml"
+adb shell dumpsys window > "$OUT/dumpsys-window.txt"
+python3 - "$OUT/ui-keyboard.xml" "$OUT/dumpsys-window.txt" <<'PY' || exit 1
+import re, sys
+ui = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+win = open(sys.argv[2], encoding="utf-8", errors="replace").read()
+box = None
+for n in re.findall(r'<node [^>]*>', ui):
+    if 'class="android.widget.EditText"' in n:
+        box = list(map(int, re.search(r'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', n).groups())); break
+ime = [list(map(int, m)) for m in re.findall(
+    r'(?:m?[Tt]ype)=ime\s+m?[Ff]rame=\[(\d+),(\d+)\]\[(\d+),(\d+)\]\s+m?[Vv]isible=true', win)]
+ime = [f for f in ime if f[3] > f[1]]
+print("keyboard check: input box", box, "visible IME frames", ime)
+if box is None: sys.exit("keyboard check: the input box vanished after tapping it")
+if not ime:
+    print("warning: no visible keyboard reported; can't check that it leaves the input box clear"); sys.exit(0)
+if box[3] > min(f[1] for f in ime) + 2: sys.exit("keyboard check: the keyboard covers the input box")
+print("keyboard check: input box sits above the keyboard")
+PY
+adb shell input keyevent KEYCODE_BACK
 adb logcat -d > "$OUT/logcat-full.txt"
 adb shell "run-as $PKG ls files files/pyhome files/work" > "$OUT/files.txt" 2>&1
 adb shell "run-as $PKG cat files/work/device_snapshot.json" > "$OUT/device_snapshot.json" 2>&1

@@ -105,7 +105,7 @@ jobs:
         env:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
         with:
-          api-level: 34
+          api-level: 35
           arch: x86_64
           target: google_apis
           disable-animations: true

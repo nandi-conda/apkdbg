@@ -5,16 +5,19 @@ import android.app.Activity;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
+import android.graphics.Insets;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.util.Log;
+import android.view.WindowInsets;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.FrameLayout;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
@@ -50,15 +53,27 @@ public class MainActivity extends Activity implements Agent.Listener {
         s.setAllowContentAccess(false);
         web.addJavascriptInterface(new Bridge(), "Android");
         web.setWebViewClient(new Client());
-        // Android 15 draws apps edge to edge; keep the page clear of the bars and the keyboard.
-        if (Build.VERSION.SDK_INT >= 30) web.setOnApplyWindowInsetsListener((v, insets) -> {
-            android.graphics.Insets bars = insets.getInsets(
-                    android.view.WindowInsets.Type.systemBars() | android.view.WindowInsets.Type.ime()
-                            | android.view.WindowInsets.Type.displayCutout());
-            v.setPadding(bars.left, bars.top, bars.right, bars.bottom);
-            return android.view.WindowInsets.CONSUMED;
-        });
-        setContentView(web);
+        // A WebView ignores its own padding when sizing the page, so pad a frame around it instead.
+        FrameLayout root = new FrameLayout(this);
+        root.addView(web, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+        if (Build.VERSION.SDK_INT >= 30) {
+            // Android 15 draws apps edge to edge and no longer resizes them for the keyboard;
+            // do the same on 11-14 so one path keeps the page clear of the bars and the keyboard.
+            getWindow().setDecorFitsSystemWindows(false);
+            root.setOnApplyWindowInsetsListener((v, insets) -> {
+                Insets bars = insets.getInsets(WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
+                Insets ime = insets.getInsets(WindowInsets.Type.ime());
+                v.setPadding(bars.left, bars.top, bars.right, Math.max(bars.bottom, ime.bottom));
+                if (insets.isVisible(WindowInsets.Type.ime())) {
+                    web.postDelayed(() -> web.evaluateJavascript(
+                            "document.activeElement && document.activeElement.scrollIntoView({block: 'nearest'})",
+                            null), 100);
+                }
+                return WindowInsets.CONSUMED;
+            });
+        }
+        setContentView(root);
         web.loadUrl(ORIGIN + "index.html");
         if (Build.VERSION.SDK_INT >= 33
                 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
