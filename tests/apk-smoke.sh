@@ -76,11 +76,16 @@ for n in re.findall(r'<node [^>]*>', open(sys.argv[1], encoding="utf-8", errors=
 PY
 )
 if [ -z "$B" ]; then echo "keyboard check: no input box on screen"; exit 1; fi
+echo "keyboard check: input box centre before tapping it: $B"
+adb shell settings put secure show_ime_with_hard_keyboard 1
 adb shell input tap $B
 sleep 3
 adb exec-out screencap -p > "$OUT/3-keyboard.png"
 adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1; adb shell cat /sdcard/ui.xml > "$OUT/ui-keyboard.xml"
 adb shell dumpsys window > "$OUT/dumpsys-window.txt"
+adb shell dumpsys input_method > "$OUT/dumpsys-ime.txt"
+grep -m1 -o 'mInputShown=[a-z]*' "$OUT/dumpsys-ime.txt"
+grep -io '[^ ]*type=ime[^}]*' "$OUT/dumpsys-window.txt" | sort -u | head -5
 python3 - "$OUT/ui-keyboard.xml" "$OUT/dumpsys-window.txt" <<'PY' || exit 1
 import re, sys
 ui = open(sys.argv[1], encoding="utf-8", errors="replace").read()
@@ -89,8 +94,11 @@ box = None
 for n in re.findall(r'<node [^>]*>', ui):
     if 'class="android.widget.EditText"' in n:
         box = list(map(int, re.search(r'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', n).groups())); break
-ime = [list(map(int, m)) for m in re.findall(
-    r'(?:m?[Tt]ype)=ime\s+m?[Ff]rame=\[(\d+),(\d+)\]\[(\d+),(\d+)\]\s+m?[Vv]isible=true', win)]
+ime = []
+for m in re.finditer(r'type=ime\b', win, re.I):  # InsetsSource toString differs by release
+    chunk = win[m.end():m.end() + 300]
+    f = re.search(r'[Ff]rame=\[(\d+),(\d+)\]\[(\d+),(\d+)\]', chunk)
+    if f and re.search(r'[Vv]isible=true', chunk.split('}')[0]): ime.append(list(map(int, f.groups())))
 ime = [f for f in ime if f[3] > f[1]]
 print("keyboard check: input box", box, "visible IME frames", ime)
 if box is None: sys.exit("keyboard check: the input box vanished after tapping it")
